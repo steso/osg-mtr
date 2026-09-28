@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+results/
+UTE MT Revision/
+*.nii
+*.nii.gz
+dicom_b0_orientations.csv
+plan.md

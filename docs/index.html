@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTR Tendon Viewer</title>
+  <style>
+    :root {
+      --ink: #17211e;
+      --muted: #64706c;
+      --paper: #eef0e9;
+      --panel: #fffefa;
+      --line: #c8cec7;
+      --accent: #087e6a;
+      --hot: #d22f2f;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: Georgia, "Times New Roman", serif; }
+    main { min-height: 100vh; display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); }
+    aside { padding: 24px; background: var(--panel); border-right: 1px solid var(--line); }
+    h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: 0; }
+    .kicker { margin: 0 0 22px; color: var(--muted); font: 12px Consolas, monospace; text-transform: uppercase; }
+    fieldset { margin: 0 0 20px; padding: 0; border: 0; }
+    legend { width: 100%; margin-bottom: 9px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 700; }
+    label { display: block; margin: 10px 0 5px; font-size: 13px; }
+    input[type="file"] { width: 100%; font: 11px Consolas, monospace; }
+    .note { color: var(--muted); font: 11px/1.45 Consolas, monospace; }
+    .privacy { padding: 10px; border-left: 3px solid var(--accent); background: #edf5f1; }
+    #status { min-height: 40px; margin-top: 12px; font-size: 13px; line-height: 1.4; }
+    .workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-rows: auto minmax(520px, 1fr); background: #090d0c; }
+    .toolbar { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f7f7f2; border-bottom: 1px solid var(--line); }
+    .segmented { display: flex; gap: 2px; padding: 2px; background: #dfe2da; border-radius: 4px; }
+    button { border: 0; border-radius: 3px; padding: 8px 10px; color: #4f5b57; background: transparent; font: 11px Consolas, monospace; cursor: pointer; }
+    button.active { color: white; background: var(--accent); }
+    button:disabled { opacity: .45; cursor: default; }
+    .toggle { display: inline-flex; align-items: center; gap: 7px; margin: 0; white-space: nowrap; font: 11px Consolas, monospace; }
+    .viewer { position: relative; min-width: 0; min-height: 0; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .workspace { min-height: 70vh; grid-template-rows: auto 70vh; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .segmented { overflow-x: auto; }
+      button { flex: 1 0 auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <aside>
+      <h1>MTR tendon viewer</h1>
+      <p class="kicker">static quality control</p>
+      <p class="note privacy">Files remain in this browser tab. This static site has no upload or analysis server.</p>
+      <fieldset>
+        <legend>Volumes</legend>
+        <label for="mtr">MTR image</label>
+        <input id="mtr" type="file" accept=".nii,.nii.gz">
+        <label for="labels">Tendon labels</label>
+        <input id="labels" type="file" accept=".nii,.nii.gz">
+        <label for="angle">Angle to B0</label>
+        <input id="angle" type="file" accept=".nii,.nii.gz">
+        <label for="deviation">Magic-angle deviation</label>
+        <input id="deviation" type="file" accept=".nii,.nii.gz">
+        <label for="centerlines">Labeled centerlines</label>
+        <input id="centerlines" type="file" accept=".nii,.nii.gz">
+      </fieldset>
+      <p class="note">Generate these maps with the local Python application, then inspect them here without committing or transferring patient data.</p>
+      <div id="status" role="status">Choose an MTR image to begin.</div>
+    </aside>
+    <section class="workspace">
+      <div class="toolbar">
+        <div class="segmented" aria-label="Overlay display">
+          <button type="button" class="active" data-overlay="labels" disabled>Labels</button>
+          <button type="button" data-overlay="angle" disabled>Angle to B0</button>
+          <button type="button" data-overlay="deviation" disabled>Magic deviation</button>
+        </div>
+        <label class="toggle"><input id="show-centerlines" type="checkbox" checked disabled> Centerlines</label>
+        <div class="segmented" aria-label="Viewer layout">
+          <button type="button" class="active" data-view="render">3D</button>
+          <button type="button" data-view="ortho3d">Ortho + 3D</button>
+        </div>
+      </div>
+      <section class="viewer"><canvas id="gl"></canvas></section>
+    </section>
+  </main>
+  <script type="module">
+    import { Niivue } from "https://cdn.jsdelivr.net/npm/@niivue/niivue@0.57.0/+esm";
+
+    const nv = new Niivue({
+      backColor: [0.035, 0.05, 0.047, 1],
+      show3Dcrosshair: true,
+      multiplanarShowRender: 1
+    });
+    await nv.attachTo("gl");
+    nv.addColormap("magicDeviation", {
+      R: [210, 210, 246, 35],
+      G: [45, 45, 180, 139],
+      B: [45, 45, 65, 84],
+      A: [0, 255, 255, 255],
+      I: [0, 1, 128, 255]
+    });
+    nv.setSliceType(nv.sliceTypeRender);
+
+    const inputs = Object.fromEntries(
+      ["mtr", "labels", "angle", "deviation", "centerlines"].map(id => [id, document.querySelector(`#${id}`)])
+    );
+    const status = document.querySelector("#status");
+    const centerlineToggle = document.querySelector("#show-centerlines");
+    let overlayMode = "labels";
+    let objectUrls = [];
+
+    function fileUrl(file) {
+      const url = URL.createObjectURL(file);
+      objectUrls.push(url);
+      return url;
+    }
+
+    function overlayAvailable(mode) {
+      return Boolean(inputs[mode].files[0]);
+    }
+
+    function updateControls() {
+      document.querySelectorAll("[data-overlay]").forEach(button => {
+        button.disabled = !overlayAvailable(button.dataset.overlay);
+      });
+      centerlineToggle.disabled = !inputs.centerlines.files[0];
+    }
+
+    async function refreshViewer() {
+      const mtr = inputs.mtr.files[0];
+      if (!mtr) {
+        status.textContent = "Choose an MTR image to begin.";
+        return;
+      }
+      objectUrls.forEach(URL.revokeObjectURL);
+      objectUrls = [];
+      const volumes = [{ url: fileUrl(mtr), name: mtr.name, colormap: "gray" }];
+      const overlay = inputs[overlayMode].files[0];
+      if (overlay) {
+        const settings = {
+          labels: { colormap: "turbo", opacity: 0.75, cal_min: 0, cal_max: 12 },
+          angle: { colormap: "turbo", opacity: 0.8, cal_min: 0, cal_max: 90 },
+          deviation: { colormap: "magicDeviation", opacity: 0.85, cal_min: -1, cal_max: 54.7356 }
+        }[overlayMode];
+        volumes.push({ url: fileUrl(overlay), name: overlay.name, ...settings });
+      }
+      const centerlines = inputs.centerlines.files[0];
+      if (centerlines && centerlineToggle.checked) {
+        volumes.push({ url: fileUrl(centerlines), name: centerlines.name, colormap: "turbo", opacity: 1, cal_min: 0, cal_max: 12 });
+      }
+      try {
+        status.textContent = "Loading local volumes...";
+        await nv.loadVolumes(volumes);
+        status.textContent = `${volumes.length} local volume${volumes.length === 1 ? "" : "s"} displayed. Nothing was uploaded.`;
+      } catch (error) {
+        status.textContent = error.message || "Could not load the selected volumes.";
+      }
+    }
+
+    Object.values(inputs).forEach(input => input.addEventListener("change", async () => {
+      updateControls();
+      if (input.id !== "mtr" && input.id !== "centerlines") {
+        overlayMode = input.id;
+        document.querySelectorAll("[data-overlay]").forEach(button => {
+          button.classList.toggle("active", button.dataset.overlay === overlayMode);
+        });
+      }
+      await refreshViewer();
+    }));
+
+    document.querySelectorAll("[data-overlay]").forEach(button => button.addEventListener("click", async () => {
+      overlayMode = button.dataset.overlay;
+      document.querySelectorAll("[data-overlay]").forEach(item => item.classList.toggle("active", item === button));
+      await refreshViewer();
+    }));
+
+    centerlineToggle.addEventListener("change", refreshViewer);
+    document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-view]").forEach(item => item.classList.toggle("active", item === button));
+      nv.setSliceType(button.dataset.view === "render" ? nv.sliceTypeRender : nv.sliceTypeMultiplanar);
+    }));
+
+    updateControls();
+    window.addEventListener("beforeunload", () => objectUrls.forEach(URL.revokeObjectURL));
+  </script>
+</body>
+</html>

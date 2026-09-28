@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTR Tendon Orientation</title>
+  <style>
+    :root { --ink: #15201d; --paper: #f1f0e8; --panel: #fffefa; --line: #c9ccc3; --accent: #087e6a; --hot: #d7623c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; color: var(--ink); background: radial-gradient(circle at 12% 18%, #dbe9df 0 1px, transparent 2px) 0 0 / 22px 22px, var(--paper); font-family: Georgia, "Times New Roman", serif; }
+    main { height: 100vh; overflow: hidden; display: grid; grid-template-columns: minmax(250px, 320px) 1fr; }
+    aside { padding: 24px; background: color-mix(in srgb, var(--panel) 94%, transparent); border-right: 1px solid var(--line); overflow-y: auto; }
+    h1 { margin: 0 0 4px; font-size: 24px; font-weight: 600; letter-spacing: 0; }
+    .kicker { margin: 0 0 24px; color: #65716d; font: 12px Consolas, monospace; text-transform: uppercase; }
+    fieldset { margin: 0 0 20px; padding: 0; border: 0; }
+    legend { width: 100%; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 700; }
+    label { display: block; margin: 10px 0 5px; font-size: 13px; }
+    input[type=file], select { width: 100%; font: 12px Consolas, monospace; }
+    select { padding: 8px; border: 1px solid var(--line); background: white; color: var(--ink); }
+    .vector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .vector input { width: 100%; padding: 8px; border: 1px solid var(--line); background: #e8e9e3; color: #4f5b57; font: 13px Consolas, monospace; }
+    .axis-note { margin: 8px 0 12px; color: #65716d; font: 11px/1.4 Consolas, monospace; }
+    .planes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .plane { position: relative; aspect-ratio: 1; border: 1px solid var(--line); background: white; overflow: hidden; }
+    .plane-name { position: absolute; top: 5px; left: 0; right: 0; text-align: center; font: 10px Consolas, monospace; text-transform: uppercase; }
+    .direction { position: absolute; color: #68736f; font: 9px Consolas, monospace; }
+    .direction.top { top: 20px; left: 50%; transform: translateX(-50%); }
+    .direction.bottom { bottom: 4px; left: 50%; transform: translateX(-50%); }
+    .direction.left { left: 4px; top: 55%; transform: translateY(-50%); }
+    .direction.right { right: 4px; top: 55%; transform: translateY(-50%); }
+    .b0-arrow { position: absolute; left: 50%; top: 56%; width: 3px; height: 30%; background: var(--hot); transform: translate(-50%, -100%); transform-origin: 50% 100%; }
+    .b0-arrow::before { content: ""; position: absolute; left: 50%; top: -7px; border: 6px solid transparent; border-bottom: 9px solid var(--hot); transform: translate(-50%, -50%); }
+    .b0-through { display: none; position: absolute; left: 50%; top: 56%; width: 25px; height: 25px; border: 3px solid var(--hot); border-radius: 50%; transform: translate(-50%, -50%); }
+    .b0-through::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--hot); transform: translate(-50%, -50%); }
+    .plane-caption { margin: 7px 0 0; color: var(--hot); font: 10px/1.3 Consolas, monospace; text-align: center; }
+    button { width: 100%; border: 0; border-radius: 4px; padding: 10px 12px; color: white; background: var(--accent); font: 700 13px Georgia, serif; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .segmented { display: flex; gap: 2px; padding: 2px; background: #dfe2da; border-radius: 4px; }
+    .segmented button { padding: 7px; color: #4f5b57; background: transparent; font: 11px Consolas, monospace; }
+    .segmented button.active { color: white; background: var(--accent); }
+    #status { min-height: 38px; margin-top: 12px; font-size: 13px; line-height: 1.4; }
+    #summary { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; font: 12px Consolas, monospace; }
+    #summary strong { color: var(--hot); }
+    #tendon-list { margin: 12px 0; font: 11px/1.5 Consolas, monospace; color: #4f5b57; }
+    .tendon-key { display: flex; align-items: center; gap: 7px; margin: 4px 0; }
+    .tendon-swatch { flex: 0 0 10px; width: 10px; height: 10px; border: 1px solid #606864; }
+    .workspace { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(280px, 1fr) auto; background: #090d0c; }
+    #display-controls { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #f7f7f2; border-bottom: 1px solid var(--line); }
+    #display-controls[hidden], #profiles[hidden] { display: none; }
+    #display-controls .segmented { margin: 0; }
+    #display-controls button { width: auto; min-width: 74px; }
+    .centerline-toggle { display: inline-flex; align-items: center; gap: 7px; margin: 0; white-space: nowrap; font: 11px Consolas, monospace; }
+    #profiles { padding: 10px 14px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; background: var(--panel); border-top: 1px solid var(--line); }
+    .profile-panel { min-width: 0; }
+    .profile-title { margin: 0 0 3px; font-size: 12px; }
+    .profile-note { margin: 0 0 6px; color: #65716d; font: 10px/1.35 Consolas, monospace; }
+    .profile-chart { display: block; width: 100%; height: auto; background: white; border: 1px solid var(--line); }
+    .profile-axis { stroke: #8c948f; stroke-width: 1; }
+    .profile-reference { stroke: #4f5b57; stroke-width: 1; stroke-dasharray: 4 3; }
+    .profile-label { fill: #65716d; font: 8px Consolas, monospace; }
+    .downloads a { display: block; margin-top: 8px; color: var(--accent); font-size: 13px; }
+    .viewer { position: relative; min-width: 0; min-height: 0; background: #090d0c; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    @media (max-width: 760px) { body { overflow: auto; } main { height: auto; min-height: 100vh; overflow: visible; grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .workspace { grid-template-rows: auto 65vh auto; } #display-controls { align-items: stretch; flex-direction: column; } #profiles { grid-template-columns: 1fr; } .viewer { min-height: 65vh; } }
+  </style>
+</head>
+<body>
+  <main>
+    <aside>
+      <h1>MTR orientation</h1>
+      <p class="kicker">tendon / B0 inspection</p>
+      <fieldset>
+        <legend>Volumes</legend>
+        <label for="local-patient">Local patient</label>
+        <select id="local-patient"><option value="">Loading local folders...</option></select>
+        <p class="axis-note" id="local-roots"></p>
+        <label for="mtr">MTR image</label>
+        <input id="mtr" type="file" accept=".nii,.nii.gz">
+        <label for="segmentation">Subject segmentation folder</label>
+        <input id="segmentation" type="file" accept=".nii,.nii.gz" webkitdirectory directory multiple>
+        <p class="axis-note" id="segmentation-count">No segmentation folder selected.</p>
+      </fieldset>
+      <fieldset>
+        <legend>B0 orientation</legend>
+        <div class="planes" aria-label="Scanner Z direction projected into image planes">
+          <div>
+            <div class="plane" data-plane="ij">
+              <span class="plane-name">i-j</span><span class="direction top">+j</span><span class="direction bottom">-j</span><span class="direction left">-i</span><span class="direction right">+i</span>
+              <span class="b0-arrow"></span><span class="b0-through"></span>
+            </div>
+            <p class="plane-caption" data-caption="ij">waiting</p>
+          </div>
+          <div>
+            <div class="plane" data-plane="ik">
+              <span class="plane-name">i-k</span><span class="direction top">+k</span><span class="direction bottom">-k</span><span class="direction left">-i</span><span class="direction right">+i</span>
+              <span class="b0-arrow"></span><span class="b0-through"></span>
+            </div>
+            <p class="plane-caption" data-caption="ik">waiting</p>
+          </div>
+          <div>
+            <div class="plane" data-plane="jk">
+              <span class="plane-name">j-k</span><span class="direction top">+k</span><span class="direction bottom">-k</span><span class="direction left">-j</span><span class="direction right">+j</span>
+              <span class="b0-arrow"></span><span class="b0-through"></span>
+            </div>
+            <p class="plane-caption" data-caption="jk">waiting</p>
+          </div>
+        </div>
+        <p class="axis-note" id="orientation-note">Load a Patient_XX file to retrieve scanner Z from its DICOM headers.</p>
+        <div class="vector">
+          <input id="b0i" value="i: --" readonly aria-label="B0 image i component">
+          <input id="b0j" value="j: --" readonly aria-label="B0 image j component">
+          <input id="b0k" value="k: --" readonly aria-label="B0 image k component">
+        </div>
+      </fieldset>
+      <button id="analyze">Analyze and show all tendon labels</button>
+      <div id="status">Load an MTR volume and its subject segmentation folder.</div>
+      <div id="summary"></div>
+      <div id="tendon-list"></div>
+      <div class="downloads" id="downloads"></div>
+    </aside>
+    <section class="workspace">
+      <div id="display-controls" hidden>
+        <div class="segmented" aria-label="Overlay display">
+          <button type="button" class="active" data-overlay="labels">Labels</button>
+          <button type="button" data-overlay="angle">Angle to B0</button>
+          <button type="button" data-overlay="deviation">Magic deviation</button>
+        </div>
+        <label class="centerline-toggle"><input id="show-centerlines" type="checkbox" checked> Centerlines</label>
+        <div class="segmented" aria-label="Viewer layout">
+          <button type="button" class="active" data-view="render">3D</button>
+          <button type="button" data-view="ortho3d">Ortho + 3D</button>
+        </div>
+      </div>
+      <section class="viewer"><canvas id="gl"></canvas></section>
+      <div id="profiles" hidden>
+        <section class="profile-panel">
+          <h2 class="profile-title">Centerline angle to B0</h2>
+          <p class="profile-note">Local tangent from a 5 mm centerline neighborhood; dashed line = 54.7 deg.</p>
+          <svg id="angle-profile" class="profile-chart" viewBox="0 0 560 150" role="img" aria-label="Tendon angle to B0 along centerline"></svg>
+        </section>
+        <section class="profile-panel">
+          <h2 class="profile-title">Deviation from magic angle</h2>
+          <p class="profile-note">Absolute difference from 54.7 deg; zero is closest to the magic angle.</p>
+          <svg id="magic-profile" class="profile-chart" viewBox="0 0 560 150" role="img" aria-label="Angular deviation from the magic angle along centerline"></svg>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script type="module">
+    import { Niivue } from "https://cdn.jsdelivr.net/npm/@niivue/niivue@0.57.0/+esm";
+
+    const nv = new Niivue({ backColor: [0.035, 0.05, 0.047, 1], show3Dcrosshair: true, multiplanarShowRender: 1 });
+    await nv.attachTo("gl");
+    nv.addColormap("magicDeviation", {
+      R: [210, 210, 246, 35], G: [45, 45, 180, 139], B: [45, 45, 65, 84], A: [0, 255, 255, 255], I: [0, 1, 128, 255]
+    });
+    nv.setSliceType(nv.sliceTypeRender);
+
+    const mtr = document.querySelector("#mtr");
+    const segmentation = document.querySelector("#segmentation");
+    const localPatientSelect = document.querySelector("#local-patient");
+    const status = document.querySelector("#status");
+    const analyze = document.querySelector("#analyze");
+    const objectUrls = [];
+    let currentOrientation = null;
+    let localPatient = null;
+    let localPatients = [];
+    let lastResult = null;
+    let displayMode = "labels";
+
+    function selectedSegmentations() {
+      const files = [...segmentation.files].filter(file => /\.nii(\.gz)?$/i.test(file.name));
+      const unique = new Map();
+      for (const file of files.sort((a, b) => a.name.endsWith(".nii.gz") ? -1 : 1)) {
+        const key = file.name.replace(/\.nii(\.gz)?$/i, "").toLowerCase();
+        if (!unique.has(key)) unique.set(key, file);
+      }
+      return [...unique.values()];
+    }
+
+    function drawProjection(name, horizontal, vertical, normal) {
+      const plane = document.querySelector(`[data-plane="${name}"]`);
+      const arrow = plane.querySelector(".b0-arrow");
+      const through = plane.querySelector(".b0-through");
+      const magnitude = Math.hypot(horizontal, vertical);
+      arrow.style.display = magnitude < 0.015 ? "none" : "block";
+      through.style.display = magnitude < 0.015 ? "block" : "none";
+      arrow.style.height = `${18 + 18 * magnitude}%`;
+      arrow.style.transform = `translate(-50%, -100%) rotate(${Math.atan2(horizontal, vertical) * 180 / Math.PI}deg)`;
+      document.querySelector(`[data-caption="${name}"]`).textContent = `normal ${normal >= 0 ? "+" : ""}${normal.toFixed(3)}`;
+    }
+
+    function showOrientation(result) {
+      const [i, j, k] = [result.b0_image_i, result.b0_image_j, result.b0_image_k];
+      currentOrientation = result;
+      document.querySelector("#b0i").value = `i: ${i.toFixed(3)}`;
+      document.querySelector("#b0j").value = `j: ${j.toFixed(3)}`;
+      document.querySelector("#b0k").value = `k: ${k.toFixed(3)}`;
+      document.querySelector("#orientation-note").textContent = `${result.patient} ${result.map_type.toUpperCase()}: DICOM scanner Z in map axes [${i.toFixed(3)}, ${j.toFixed(3)}, ${k.toFixed(3)}]; angulation ${result.angulation_deg.toFixed(2)} deg`;
+      drawProjection("ij", i, j, k);
+      drawProjection("ik", i, k, j);
+      drawProjection("jk", j, k, i);
+    }
+
+    async function updateOrientation(file) {
+      currentOrientation = null;
+      const form = new FormData();
+      form.append("volume", file);
+      const response = await fetch("/api/orientation", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Orientation calculation failed");
+      showOrientation(result);
+    }
+
+    async function refreshVolumes(includeSegmentations = true) {
+      objectUrls.splice(0).forEach(URL.revokeObjectURL);
+      const volumes = [];
+      if (localPatient) {
+        const selected = localPatients.find(patient => patient.number === localPatient);
+        volumes.push({ url: `/api/local-volume/${localPatient}/mtr/0`, name: selected.mtr_name, colormap: "gray" });
+        if (includeSegmentations) {
+          selected.segmentation_names.forEach((name, index) => {
+            volumes.push({ url: `/api/local-volume/${localPatient}/segmentation/${index}`, name, colormap: "turbo", opacity: 0.35, cal_min: 1, cal_max: 5 });
+          });
+        }
+      } else if (mtr.files[0]) {
+        const url = URL.createObjectURL(mtr.files[0]);
+        objectUrls.push(url);
+        volumes.push({ url, name: mtr.files[0].name, colormap: "gray" });
+      }
+      for (const file of includeSegmentations ? selectedSegmentations() : []) {
+        const url = URL.createObjectURL(file);
+        objectUrls.push(url);
+        volumes.push({ url, name: file.name, colormap: "turbo", opacity: 0.35, cal_min: 1, cal_max: 5 });
+      }
+      if (volumes.length) {
+        await nv.loadVolumes(volumes);
+      }
+    }
+    mtr.addEventListener("change", async () => {
+      localPatient = null;
+      localPatientSelect.value = "";
+      try {
+        await updateOrientation(mtr.files[0]);
+        await refreshVolumes();
+        if (selectedSegmentations().length) analyze.click();
+      }
+      catch (error) { status.textContent = error.message; }
+    });
+    segmentation.addEventListener("change", async () => {
+      localPatient = null;
+      localPatientSelect.value = "";
+      const files = selectedSegmentations();
+      document.querySelector("#segmentation-count").textContent = `${files.length} unique NIfTI segmentation${files.length === 1 ? "" : "s"} selected.`;
+      await refreshVolumes();
+      if (mtr.files[0] && currentOrientation) analyze.click();
+    });
+
+    localPatientSelect.addEventListener("change", async () => {
+      localPatient = Number(localPatientSelect.value) || null;
+      if (!localPatient) return;
+      const selected = localPatients.find(patient => patient.number === localPatient);
+      document.querySelector("#segmentation-count").textContent = `${selected.segmentation_count} unique NIfTI files; all labels will be shown jointly.`;
+      status.textContent = `Loading ${selected.patient} with ${selected.mtr_name}...`;
+      try {
+        const response = await fetch(`/api/orientation-local/${localPatient}`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Orientation calculation failed");
+        showOrientation(result);
+        await refreshVolumes();
+        status.textContent = `${selected.mtr_name} loaded. Creating distinct colors and labels...`;
+        analyze.click();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    });
+
+    analyze.addEventListener("click", async () => {
+      const segmentations = selectedSegmentations();
+      if (!localPatient && !segmentations.length) { status.textContent = "Choose a local patient or a folder containing NIfTI tendon segmentations first."; return; }
+      if (!localPatient && !mtr.files[0]) { status.textContent = "Choose the subject's MTR volume first."; return; }
+      if (!currentOrientation) { status.textContent = "Load a Patient_XX MTR file to retrieve its DICOM orientation first."; return; }
+      const selected = localPatients.find(patient => patient.number === localPatient);
+      const fileCount = selected ? selected.segmentation_count : segmentations.length;
+      analyze.disabled = true;
+      status.textContent = `Identifying labels and estimating centerlines from ${fileCount} files...`;
+      const form = new FormData();
+      if (!localPatient) {
+        form.append("reference", mtr.files[0]);
+        for (const file of segmentations) form.append("segmentations", file, file.name);
+      }
+      form.append("b0x", currentOrientation.b0_image_i);
+      form.append("b0y", currentOrientation.b0_image_j);
+      form.append("b0z", currentOrientation.b0_image_k);
+      try {
+        const endpoint = localPatient ? `/api/analyze-local/${localPatient}` : "/api/analyze";
+        const response = await fetch(endpoint, { method: "POST", body: form });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Analysis failed");
+        status.textContent = `Showing ${result.tendon_count} labeled tendon segments from ${fileCount} files.`;
+        document.querySelector("#summary").innerHTML = `
+          <span>Tendons</span><strong>${result.tendon_count}</strong>
+          <span>Mean angle to B0</span><strong>${result.mean_angle_deg.toFixed(1)} deg</strong>
+          <span>Median angle</span><strong>${result.median_angle_deg.toFixed(1)} deg</strong>
+          <span>Angle range</span><strong>${result.min_angle_deg.toFixed(1)}-${result.max_angle_deg.toFixed(1)} deg</strong>
+          <span>Centerline voxels</span><strong>${result.centerline_voxels}</strong>
+          <span>Mean magic deviation</span><strong>${result.magic_deviation_mean_deg.toFixed(1)} deg</strong>`;
+        const tendonList = document.querySelector("#tendon-list");
+        tendonList.replaceChildren(...result.tendons.map(tendon => {
+          const item = document.createElement("div");
+          item.className = "tendon-key";
+          const swatch = document.createElement("span");
+          swatch.className = "tendon-swatch";
+          swatch.style.background = turboColor(tendon.tendon_label, result.tendon_count);
+          item.append(swatch);
+          const text = document.createElement("span");
+          const removed = tendon.excluded_small_component_voxels
+            ? `; ${tendon.excluded_small_component_voxels} isolated voxels removed`
+            : "";
+          const grown = tendon.region_grown_voxels
+            ? `; ${tendon.region_grown_voxels} MTR-supported voxels added`
+            : "";
+          const topology = tendon.skeleton_branch_voxels
+            ? `; QC: ${tendon.skeleton_branch_voxels} branch voxels, primary trunk shown`
+            : "";
+          text.textContent = `${tendon.tendon_label}. ${tendon.segmentation} [source label ${tendon.source_label}${removed}${grown}${topology}]`;
+          item.append(text);
+          return item;
+        }));
+        document.querySelector("#downloads").innerHTML = `
+          <a href="${result.angle_map_url}" download>Download combined angle map</a>
+          <a href="${result.magic_map_url}" download>Download combined magic-angle map</a>
+          <a href="${result.magic_deviation_map_url}" download>Download magic-angle deviation map</a>
+          <a href="${result.label_map_url}" download>Download labeled tendon map</a>
+          <a href="${result.centerline_url}" download>Download labeled centerlines</a>
+          <a href="${result.summary_csv_url}" download>Download summary CSV</a>`;
+        lastResult = result;
+        document.querySelector("#display-controls").hidden = false;
+        document.querySelector("#profiles").hidden = false;
+        renderProfiles(result.tendons);
+        await showOverlay("labels");
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        analyze.disabled = false;
+      }
+    });
+
+    function turboColor(label, count) {
+      const x = label / (count + 1);
+      const red = 34.61 + x * (1172.33 + x * (-10793.56 + x * (33300.12 + x * (-38394.49 + x * 14825.05))));
+      const green = 23.31 + x * (557.33 + x * (1225.33 + x * (-3574.96 + x * (2258.55 - x * 341.23))));
+      const blue = 27.2 + x * (3211.1 + x * (-15327.97 + x * (27814 + x * (-22569.18 + x * 6838.66))));
+      const channel = value => Math.round(Math.max(0, Math.min(255, value)));
+      return `rgb(${channel(red)} ${channel(green)} ${channel(blue)})`;
+    }
+
+    async function showOverlay(mode) {
+      if (!lastResult) return;
+      displayMode = mode;
+      document.querySelectorAll("[data-overlay]").forEach(button => button.classList.toggle("active", button.dataset.overlay === mode));
+      await refreshVolumes(false);
+      if (mode === "labels") {
+        await nv.addVolumeFromUrl({ url: lastResult.label_map_url, name: "tendon labels", colormap: "turbo", opacity: 0.75, cal_min: 0, cal_max: lastResult.tendon_count + 1 });
+      } else if (mode === "angle") {
+        await nv.addVolumeFromUrl({ url: lastResult.angle_map_url, name: "angle to B0 (degrees)", colormap: "turbo", opacity: 0.8, cal_min: 0, cal_max: 90 });
+      } else {
+        await nv.addVolumeFromUrl({ url: lastResult.magic_deviation_map_url, name: "deviation from magic angle (degrees)", colormap: "magicDeviation", opacity: 0.85, cal_min: -1, cal_max: 54.7356 });
+      }
+      if (document.querySelector("#show-centerlines").checked) {
+        await nv.addVolumeFromUrl({ url: lastResult.centerline_url, name: "centerlines", colormap: "turbo", opacity: 1, cal_min: 0, cal_max: lastResult.tendon_count + 1 });
+      }
+    }
+
+    function renderProfile(svg, tendons, valueKey, minimum, maximum, reference) {
+      const namespace = "http://www.w3.org/2000/svg";
+      const width = 560, height = 150, left = 32, right = 8, top = 8, bottom = 22;
+      const plotWidth = width - left - right, plotHeight = height - top - bottom;
+      const maxLength = Math.max(...tendons.flatMap(tendon => tendon.profile_position_mm), 1);
+      const x = value => left + value / maxLength * plotWidth;
+      const y = value => top + (maximum - value) / (maximum - minimum) * plotHeight;
+      svg.replaceChildren();
+      const line = (x1, y1, x2, y2, className) => {
+        const element = document.createElementNS(namespace, "line");
+        Object.entries({ x1, y1, x2, y2 }).forEach(([key, value]) => element.setAttribute(key, value));
+        element.setAttribute("class", className);
+        svg.append(element);
+      };
+      line(left, top, left, height - bottom, "profile-axis");
+      line(left, height - bottom, width - right, height - bottom, "profile-axis");
+      line(left, y(reference), width - right, y(reference), "profile-reference");
+      for (const tendon of tendons) {
+        const values = tendon[valueKey];
+        if (!values?.length) continue;
+        const polyline = document.createElementNS(namespace, "polyline");
+        polyline.setAttribute("points", tendon.profile_position_mm.map((position, index) => `${x(position)},${y(values[index])}`).join(" "));
+        polyline.setAttribute("fill", "none");
+        polyline.setAttribute("stroke", turboColor(tendon.tendon_label, tendons.length));
+        polyline.setAttribute("stroke-width", "1.5");
+        svg.append(polyline);
+      }
+      for (const [text, tx, ty] of [["0", left - 4, height - bottom + 11], [`${maxLength.toFixed(0)} mm`, width - right, height - 5], [maximum.toFixed(1), left - 4, top + 3], [minimum.toFixed(1), left - 4, height - bottom]]) {
+        const label = document.createElementNS(namespace, "text");
+        label.setAttribute("x", tx); label.setAttribute("y", ty); label.setAttribute("class", "profile-label");
+        label.setAttribute("text-anchor", tx < left ? "end" : tx > left ? "end" : "start");
+        label.textContent = text; svg.append(label);
+      }
+    }
+
+    function renderProfiles(tendons) {
+      renderProfile(document.querySelector("#angle-profile"), tendons, "profile_angle_deg", 0, 90, 54.7356);
+      renderProfile(document.querySelector("#magic-profile"), tendons, "profile_magic_deviation_deg", 0, 55, 0);
+    }
+
+    document.querySelectorAll("[data-overlay]").forEach(button => button.addEventListener("click", () => showOverlay(button.dataset.overlay)));
+    document.querySelector("#show-centerlines").addEventListener("change", () => showOverlay(displayMode));
+    document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-view]").forEach(item => item.classList.toggle("active", item === button));
+      nv.setSliceType(button.dataset.view === "render" ? nv.sliceTypeRender : nv.sliceTypeMultiplanar);
+    }));
+
+    async function loadLocalPatients() {
+      try {
+        const response = await fetch("/api/local-data");
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not read local folders");
+        localPatients = result.patients;
+        localPatientSelect.replaceChildren(new Option("Choose a local patient", ""));
+        for (const patient of localPatients) {
+          const mtrType = patient.mtr_masked ? "masked MTR" : "MTR";
+          localPatientSelect.add(new Option(`${patient.patient} (${mtrType}, ${patient.segmentation_count} files)`, patient.number));
+        }
+        document.querySelector("#local-roots").textContent = `Segmentations: ${result.segmentation_root} | MTR: ${result.mtr_root}`;
+      } catch (error) {
+        localPatientSelect.replaceChildren(new Option("Local folders unavailable", ""));
+        status.textContent = error.message;
+      }
+    }
+
+    await loadLocalPatients();
+  </script>
+</body>
+</html>
