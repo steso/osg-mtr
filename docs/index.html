@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MTR Tendon Viewer</title>
+  <title>MTR Tendon Analyzer</title>
   <style>
     :root {
       --ink: #17211e;
@@ -23,10 +23,19 @@
     fieldset { margin: 0 0 20px; padding: 0; border: 0; }
     legend { width: 100%; margin-bottom: 9px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 700; }
     label { display: block; margin: 10px 0 5px; font-size: 13px; }
-    input[type="file"] { width: 100%; font: 11px Consolas, monospace; }
+    input[type="file"], input[type="number"] { width: 100%; font: 11px Consolas, monospace; }
+    input[type="number"] { padding: 7px; border: 1px solid var(--line); background: white; }
+    .vector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .vector label { margin-top: 4px; }
     .note { color: var(--muted); font: 11px/1.45 Consolas, monospace; }
     .privacy { padding: 10px; border-left: 3px solid var(--accent); background: #edf5f1; }
     #status { min-height: 40px; margin-top: 12px; font-size: 13px; line-height: 1.4; }
+    .primary { width: 100%; color: white; background: var(--accent); font-weight: 700; }
+    .primary:disabled { color: white; background: var(--muted); }
+    progress { width: 100%; height: 5px; margin-top: 10px; accent-color: var(--accent); }
+    .downloads { margin-top: 12px; }
+    .downloads a { display: block; margin-top: 7px; color: var(--accent); font-size: 12px; }
+    [hidden] { display: none !important; }
     .workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-rows: auto minmax(520px, 1fr); background: #090d0c; }
     .toolbar { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f7f7f2; border-bottom: 1px solid var(--line); }
     .segmented { display: flex; gap: 2px; padding: 2px; background: #dfe2da; border-radius: 4px; }
@@ -49,13 +58,27 @@
 <body>
   <main>
     <aside>
-      <h1>MTR tendon viewer</h1>
-      <p class="kicker">static quality control</p>
-      <p class="note privacy">Files remain in this browser tab. This static site has no upload or analysis server.</p>
+      <h1>MTR tendon analyzer</h1>
+      <p class="kicker">private browser analysis</p>
+      <p class="note privacy">Analysis runs in this browser tab. Files never leave this device.</p>
       <fieldset>
-        <legend>Volumes</legend>
+        <legend>Analysis inputs</legend>
         <label for="mtr">MTR image</label>
         <input id="mtr" type="file" accept=".nii,.nii.gz">
+        <label for="segmentations">Tendon segmentations</label>
+        <input id="segmentations" type="file" accept=".nii,.nii.gz" multiple>
+        <label>B0 vector in image axes</label>
+        <div class="vector">
+          <label for="b0i">i<input id="b0i" type="number" value="0" step="any"></label>
+          <label for="b0j">j<input id="b0j" type="number" value="0" step="any"></label>
+          <label for="b0k">k<input id="b0k" type="number" value="1" step="any"></label>
+        </div>
+        <button id="analyze" class="primary" type="button" disabled>Extract magic-angle maps</button>
+        <progress id="analysis-progress" hidden></progress>
+        <div id="downloads" class="downloads"></div>
+      </fieldset>
+      <fieldset>
+        <legend>Generated or precomputed outputs</legend>
         <label for="labels">Tendon labels</label>
         <input id="labels" type="file" accept=".nii,.nii.gz">
         <label for="angle">Angle to B0</label>
@@ -65,8 +88,7 @@
         <label for="centerlines">Labeled centerlines</label>
         <input id="centerlines" type="file" accept=".nii,.nii.gz">
       </fieldset>
-      <p class="note">Generate these maps with the local Python application, then inspect them here without committing or transferring patient data.</p>
-      <div id="status" role="status">Choose an MTR image to begin.</div>
+      <div id="status" role="status">Choose an MTR image and tendon segmentations to begin.</div>
     </aside>
     <section class="workspace">
       <div class="toolbar">
@@ -105,10 +127,17 @@
     const inputs = Object.fromEntries(
       ["mtr", "labels", "angle", "deviation", "centerlines"].map(id => [id, document.querySelector(`#${id}`)])
     );
+    const segmentationInput = document.querySelector("#segmentations");
+    const analyzeButton = document.querySelector("#analyze");
+    const analysisProgress = document.querySelector("#analysis-progress");
+    const downloads = document.querySelector("#downloads");
     const status = document.querySelector("#status");
     const centerlineToggle = document.querySelector("#show-centerlines");
     let overlayMode = "labels";
     let objectUrls = [];
+    let downloadUrls = [];
+    let generatedFiles = {};
+    let analysisWorker;
 
     function fileUrl(file) {
       const url = URL.createObjectURL(file);
@@ -117,14 +146,19 @@
     }
 
     function overlayAvailable(mode) {
-      return Boolean(inputs[mode].files[0]);
+      return Boolean(generatedFiles[mode] || inputs[mode].files[0]);
+    }
+
+    function selectedVolume(mode) {
+      return generatedFiles[mode] || inputs[mode].files[0];
     }
 
     function updateControls() {
       document.querySelectorAll("[data-overlay]").forEach(button => {
         button.disabled = !overlayAvailable(button.dataset.overlay);
       });
-      centerlineToggle.disabled = !inputs.centerlines.files[0];
+      centerlineToggle.disabled = !selectedVolume("centerlines");
+      analyzeButton.disabled = !inputs.mtr.files[0] || !segmentationInput.files.length || !analysisProgress.hidden;
     }
 
     async function refreshViewer() {
@@ -136,7 +170,7 @@
       objectUrls.forEach(URL.revokeObjectURL);
       objectUrls = [];
       const volumes = [{ url: fileUrl(mtr), name: mtr.name, colormap: "gray" }];
-      const overlay = inputs[overlayMode].files[0];
+      const overlay = selectedVolume(overlayMode);
       if (overlay) {
         const settings = {
           labels: { colormap: "turbo", opacity: 0.75, cal_min: 0, cal_max: 12 },
@@ -145,7 +179,7 @@
         }[overlayMode];
         volumes.push({ url: fileUrl(overlay), name: overlay.name, ...settings });
       }
-      const centerlines = inputs.centerlines.files[0];
+      const centerlines = selectedVolume("centerlines");
       if (centerlines && centerlineToggle.checked) {
         volumes.push({ url: fileUrl(centerlines), name: centerlines.name, colormap: "turbo", opacity: 1, cal_min: 0, cal_max: 12 });
       }
@@ -159,6 +193,7 @@
     }
 
     Object.values(inputs).forEach(input => input.addEventListener("change", async () => {
+      if (input.id !== "mtr") delete generatedFiles[input.id];
       updateControls();
       if (input.id !== "mtr" && input.id !== "centerlines") {
         overlayMode = input.id;
@@ -168,6 +203,95 @@
       }
       await refreshViewer();
     }));
+
+    segmentationInput.addEventListener("change", updateControls);
+
+    function getAnalysisWorker() {
+      if (analysisWorker) return analysisWorker;
+      analysisWorker = new Worker("./analysis-worker.js", { type: "module" });
+      return analysisWorker;
+    }
+
+    function runAnalysis(payload, transfers) {
+      const worker = getAnalysisWorker();
+      return new Promise((resolve, reject) => {
+        worker.onmessage = event => {
+          if (event.data.type === "progress") status.textContent = event.data.message;
+          if (event.data.type === "complete") resolve(event.data);
+          if (event.data.type === "error") reject(new Error(event.data.message));
+        };
+        worker.onerror = event => reject(new Error(event.message || "The browser analysis worker stopped."));
+        worker.postMessage(payload, transfers);
+      });
+    }
+
+    function showDownloads(files) {
+      downloadUrls.forEach(URL.revokeObjectURL);
+      downloadUrls = [];
+      downloads.replaceChildren(...files.map(file => {
+        const url = URL.createObjectURL(file);
+        downloadUrls.push(url);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = file.name;
+        link.textContent = `Download ${file.name}`;
+        return link;
+      }));
+    }
+
+    analyzeButton.addEventListener("click", async () => {
+      const referenceFile = inputs.mtr.files[0];
+      const segmentationFiles = [...segmentationInput.files];
+      const b0 = ["b0i", "b0j", "b0k"].map(id => Number(document.querySelector(`#${id}`).value));
+      if (!referenceFile || !segmentationFiles.length) return;
+      if (!b0.every(Number.isFinite) || Math.hypot(...b0) === 0) {
+        status.textContent = "B0 must be a finite, non-zero vector.";
+        return;
+      }
+
+      analysisProgress.hidden = false;
+      updateControls();
+      downloads.replaceChildren();
+      try {
+        status.textContent = "Reading local NIfTI files...";
+        const reference = { name: referenceFile.name, buffer: await referenceFile.arrayBuffer() };
+        const segmentations = await Promise.all(segmentationFiles.map(async file => ({
+          name: file.name,
+          buffer: await file.arrayBuffer()
+        })));
+        const result = await runAnalysis(
+          { type: "analyze", reference, segmentations, b0 },
+          [reference.buffer, ...segmentations.map(segmentation => segmentation.buffer)]
+        );
+        const files = result.files.map(output => new File(
+          [output.buffer],
+          output.name,
+          { type: output.name.endsWith(".csv") ? "text/csv" : "application/gzip" }
+        ));
+        const byName = Object.fromEntries(files.map(file => [file.name, file]));
+        generatedFiles = {
+          labels: byName["combined_tendon_labels.nii.gz"],
+          angle: byName["combined_tendon_angle_degrees.nii.gz"],
+          deviation: byName["combined_magic_angle_deviation_degrees.nii.gz"],
+          centerlines: byName["combined_tendon_centerlines.nii.gz"]
+        };
+        showDownloads(files);
+        overlayMode = "deviation";
+        document.querySelectorAll("[data-overlay]").forEach(button => {
+          button.classList.toggle("active", button.dataset.overlay === overlayMode);
+        });
+        updateControls();
+        await refreshViewer();
+        status.textContent = `${result.summary.tendon_count} tendon${result.summary.tendon_count === 1 ? "" : "s"} analyzed locally. Six output files are ready.`;
+      } catch (error) {
+        analysisWorker?.terminate();
+        analysisWorker = undefined;
+        status.textContent = error.message || "Analysis failed.";
+      } finally {
+        analysisProgress.hidden = true;
+        updateControls();
+      }
+    });
 
     document.querySelectorAll("[data-overlay]").forEach(button => button.addEventListener("click", async () => {
       overlayMode = button.dataset.overlay;
@@ -182,7 +306,11 @@
     }));
 
     updateControls();
-    window.addEventListener("beforeunload", () => objectUrls.forEach(URL.revokeObjectURL));
+    window.addEventListener("beforeunload", () => {
+      objectUrls.forEach(URL.revokeObjectURL);
+      downloadUrls.forEach(URL.revokeObjectURL);
+      analysisWorker?.terminate();
+    });
   </script>
 </body>
 </html>

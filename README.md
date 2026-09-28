@@ -13,7 +13,7 @@ The viewer opens at `http://127.0.0.1:5000`. Load a map named with its patient a
 
 ## GitHub Pages
 
-The data-free static viewer is in `docs/index.html`. It runs entirely in the browser and accepts a local MTR image plus optional precomputed label, angle, magic-angle deviation, and centerline NIfTI files. Browser object URLs are used, so selected files are not uploaded. Analysis still requires the local Flask application because GitHub Pages cannot execute Python.
+The data-free static analyzer is in `docs/index.html`. It runs the shared `tendon_geometry.py` pipeline in a Pyodide Web Worker and accepts a local MTR image, one or more tendon segmentation NIfTI files, and the B0 vector in image axes. Selected files are not uploaded. The generated angle, magic-angle, deviation, label, centerline, and CSV outputs can be viewed and downloaded directly in the browser. Precomputed outputs can still be opened independently.
 
 The Pages workflow deploys `docs/` after pushes to `main`. In the GitHub repository settings, choose **Settings > Pages > Source > GitHub Actions**. Imaging data, generated results, and the generated DICOM orientation CSV are excluded by `.gitignore`.
 
