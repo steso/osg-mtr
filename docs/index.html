@@ -23,7 +23,7 @@
     fieldset { margin: 0 0 20px; padding: 0; border: 0; }
     legend { width: 100%; margin-bottom: 9px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 700; }
     label { display: block; margin: 10px 0 5px; font-size: 13px; }
-    input[type="file"], input[type="number"] { width: 100%; font: 11px Consolas, monospace; }
+    input[type="file"], input[type="number"], select { width: 100%; font: 11px Consolas, monospace; }
     input[type="number"] { padding: 7px; border: 1px solid var(--line); background: white; }
     .vector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .vector label { margin-top: 4px; }
@@ -43,6 +43,8 @@
     button.active { color: white; background: var(--accent); }
     button:disabled { opacity: .45; cursor: default; }
     .toggle { display: inline-flex; align-items: center; gap: 7px; margin: 0; white-space: nowrap; font: 11px Consolas, monospace; }
+    .floor-control { display: inline-flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; font: 11px Consolas, monospace; }
+    #mtr-floor { width: 104px; margin: 0; accent-color: var(--accent); }
     .viewer { position: relative; min-width: 0; min-height: 0; }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     @media (max-width: 760px) {
@@ -79,6 +81,12 @@
       </fieldset>
       <fieldset>
         <legend>Generated or precomputed outputs</legend>
+        <label for="results-folder">Results folder</label>
+        <input id="results-folder" type="file" webkitdirectory directory multiple>
+        <label for="results-subject">Subject</label>
+        <select id="results-subject" disabled>
+          <option value="">Choose a results folder first</option>
+        </select>
         <label for="labels">Tendon labels</label>
         <input id="labels" type="file" accept=".nii,.nii.gz">
         <label for="angle">Angle to B0</label>
@@ -97,6 +105,9 @@
           <button type="button" data-overlay="angle" disabled>Angle to B0</button>
           <button type="button" data-overlay="deviation" disabled>Magic deviation</button>
         </div>
+        <label class="toggle"><input id="mtr-denoise" type="checkbox" checked disabled> MTR background cleanup (2x2x2, 8/8)</label>
+        <label class="floor-control" for="mtr-floor">Floor <input id="mtr-floor" type="range" min="0" max="0.15" step="0.01" value="0.05" disabled><output id="mtr-floor-value">0.05</output></label>
+        <label class="toggle"><input id="show-mtr-underlay" type="checkbox" checked disabled> MTR underlay</label>
         <label class="toggle"><input id="show-centerlines" type="checkbox" checked disabled> Centerlines</label>
         <div class="segmented" aria-label="Viewer layout">
           <button type="button" class="active" data-view="render">3D</button>
@@ -107,7 +118,7 @@
     </section>
   </main>
   <script type="module">
-    import { Niivue } from "https://cdn.jsdelivr.net/npm/@niivue/niivue@0.57.0/+esm";
+    import { Niivue, NVImage } from "https://cdn.jsdelivr.net/npm/@niivue/niivue@0.57.0/+esm";
 
     const nv = new Niivue({
       backColor: [0.035, 0.05, 0.047, 1],
@@ -133,11 +144,26 @@
     const downloads = document.querySelector("#downloads");
     const status = document.querySelector("#status");
     const centerlineToggle = document.querySelector("#show-centerlines");
+    const mtrDenoiseToggle = document.querySelector("#mtr-denoise");
+    const mtrFloorInput = document.querySelector("#mtr-floor");
+    const mtrFloorValue = document.querySelector("#mtr-floor-value");
+    const mtrUnderlayToggle = document.querySelector("#show-mtr-underlay");
+    const resultsFolderInput = document.querySelector("#results-folder");
+    const resultsSubjectSelect = document.querySelector("#results-subject");
     let overlayMode = "labels";
     let objectUrls = [];
     let downloadUrls = [];
     let generatedFiles = {};
     let analysisWorker;
+    let resultsBySubject = new Map();
+    let selectedResultFiles;
+    let filteredMtrSource;
+    let filteredMtrFile;
+    let filteredMtrFloor;
+
+    function selectedMtr() {
+      return selectedResultFiles?.mtr || inputs.mtr.files[0];
+    }
 
     function fileUrl(file) {
       const url = URL.createObjectURL(file);
@@ -146,11 +172,11 @@
     }
 
     function overlayAvailable(mode) {
-      return Boolean(generatedFiles[mode] || inputs[mode].files[0]);
+      return Boolean(selectedResultFiles?.[mode] || generatedFiles[mode] || inputs[mode].files[0]);
     }
 
     function selectedVolume(mode) {
-      return generatedFiles[mode] || inputs[mode].files[0];
+      return selectedResultFiles?.[mode] || generatedFiles[mode] || inputs[mode].files[0];
     }
 
     function updateControls() {
@@ -158,18 +184,69 @@
         button.disabled = !overlayAvailable(button.dataset.overlay);
       });
       centerlineToggle.disabled = !selectedVolume("centerlines");
-      analyzeButton.disabled = !inputs.mtr.files[0] || !segmentationInput.files.length || !analysisProgress.hidden;
+      mtrUnderlayToggle.disabled = !selectedMtr();
+      mtrDenoiseToggle.disabled = !selectedMtr() || !mtrUnderlayToggle.checked;
+      mtrFloorInput.disabled = !selectedMtr() || !mtrUnderlayToggle.checked;
+      analyzeButton.disabled = Boolean(selectedResultFiles) || !inputs.mtr.files[0] || !segmentationInput.files.length || !analysisProgress.hidden;
+    }
+
+    function cleanMtrImage(data, dimensions, floor) {
+      const worker = new Worker("./mtr-background-worker.js", { type: "module" });
+      const copy = data.slice();
+      return new Promise((resolve, reject) => {
+        worker.onmessage = event => {
+          if (event.data.type === "progress") {
+            status.textContent = `Removing unsupported MTR background: ${event.data.percent}%`;
+          } else if (event.data.type === "complete") {
+            worker.terminate();
+            resolve(new data.constructor(event.data.buffer));
+          } else if (event.data.type === "error") {
+            worker.terminate();
+            reject(new Error(event.data.message));
+          }
+        };
+        worker.onerror = event => {
+          worker.terminate();
+          reject(new Error(event.message || "The MTR median filter worker stopped."));
+        };
+        worker.postMessage({ data: copy, dimensions, floor }, [copy.buffer]);
+      });
+    }
+
+    async function displayMtrFile(source) {
+      if (!mtrDenoiseToggle.checked) return source;
+      const floor = Number(mtrFloorInput.value);
+      if (filteredMtrSource === source && filteredMtrFloor === floor && filteredMtrFile) return filteredMtrFile;
+      status.textContent = "Preparing display-only MTR background cleanup...";
+      const image = await NVImage.loadFromFile({ file: source });
+      const dimensions = image.hdr.dims.slice(1, 4);
+      image.img = await cleanMtrImage(image.img, dimensions, floor);
+      const nifti = await image.saveToUint8Array("mtr_display_clean.nii.gz");
+      filteredMtrSource = source;
+      filteredMtrFloor = floor;
+      filteredMtrFile = new File([nifti], "mtr_display_clean.nii.gz", { type: "application/gzip" });
+      return filteredMtrFile;
     }
 
     async function refreshViewer() {
-      const mtr = inputs.mtr.files[0];
-      if (!mtr) {
+      const sourceMtr = selectedMtr();
+      if (!sourceMtr) {
         status.textContent = "Choose an MTR image to begin.";
         return;
       }
+      let mtr;
+      if (mtrUnderlayToggle.checked) {
+        try {
+          mtr = await displayMtrFile(sourceMtr);
+        } catch (error) {
+          status.textContent = error.message || "Could not clean the MTR display.";
+          return;
+        }
+      }
       objectUrls.forEach(URL.revokeObjectURL);
       objectUrls = [];
-      const volumes = [{ url: fileUrl(mtr), name: mtr.name, colormap: "gray" }];
+      const volumes = [];
+      if (mtr) volumes.push({ url: fileUrl(mtr), name: mtr.name, colormap: "gray" });
       const overlay = selectedVolume(overlayMode);
       if (overlay) {
         const settings = {
@@ -183,6 +260,10 @@
       if (centerlines && centerlineToggle.checked) {
         volumes.push({ url: fileUrl(centerlines), name: centerlines.name, colormap: "turbo", opacity: 1, cal_min: 0, cal_max: 12 });
       }
+      if (!volumes.length) {
+        status.textContent = "No image overlays are selected.";
+        return;
+      }
       try {
         status.textContent = "Loading local volumes...";
         await nv.loadVolumes(volumes);
@@ -193,6 +274,8 @@
     }
 
     Object.values(inputs).forEach(input => input.addEventListener("change", async () => {
+      selectedResultFiles = undefined;
+      resultsSubjectSelect.value = "";
       if (input.id !== "mtr") delete generatedFiles[input.id];
       updateControls();
       if (input.id !== "mtr" && input.id !== "centerlines") {
@@ -204,7 +287,59 @@
       await refreshViewer();
     }));
 
+    resultsFolderInput.addEventListener("change", () => {
+      const filesBySubject = new Map();
+      const modesByFilename = new Map([
+        ["mtr_reference.nii.gz", "mtr"],
+        ["combined_tendon_labels.nii.gz", "labels"],
+        ["combined_tendon_angle_degrees.nii.gz", "angle"],
+        ["combined_magic_angle_deviation_degrees.nii.gz", "deviation"],
+        ["combined_tendon_centerlines.nii.gz", "centerlines"]
+      ]);
+      for (const file of resultsFolderInput.files) {
+        const path = file.webkitRelativePath || file.name;
+        const match = path.match(/(?:^|\/)(Proband_\d+)\/([^/]+)$/i);
+        const mode = modesByFilename.get(match?.[2].toLowerCase());
+        if (!match || !mode) continue;
+        const subject = match[1].toUpperCase();
+        if (!filesBySubject.has(subject)) filesBySubject.set(subject, {});
+        filesBySubject.get(subject)[mode] = file;
+      }
+      resultsBySubject = new Map(
+        [...filesBySubject].filter(([, files]) => Object.keys(files).length === 5)
+      );
+      resultsSubjectSelect.replaceChildren(new Option("Choose a subject", ""));
+      for (const subject of [...resultsBySubject.keys()].sort()) {
+        resultsSubjectSelect.add(new Option(subject.replace("PROBAND_", "Proband "), subject));
+      }
+      resultsSubjectSelect.disabled = resultsBySubject.size === 0;
+      selectedResultFiles = undefined;
+      if (resultsBySubject.size) {
+        status.textContent = `${resultsBySubject.size} subjects ready. Choose a subject to load its MTR and maps.`;
+      } else {
+        status.textContent = "No complete Proband result folders found. Choose the extracted proband_04-30_magic_angle folder.";
+      }
+    });
+
+    resultsSubjectSelect.addEventListener("change", async () => {
+      selectedResultFiles = resultsBySubject.get(resultsSubjectSelect.value);
+      if (!selectedResultFiles) return;
+      updateControls();
+      await refreshViewer();
+    });
+
     segmentationInput.addEventListener("change", updateControls);
+    mtrDenoiseToggle.addEventListener("change", refreshViewer);
+    mtrUnderlayToggle.addEventListener("change", () => {
+      updateControls();
+      refreshViewer();
+    });
+    mtrFloorInput.addEventListener("input", () => {
+      mtrFloorValue.value = Number(mtrFloorInput.value).toFixed(2);
+    });
+    mtrFloorInput.addEventListener("change", () => {
+      if (mtrDenoiseToggle.checked) refreshViewer();
+    });
 
     function getAnalysisWorker() {
       if (analysisWorker) return analysisWorker;

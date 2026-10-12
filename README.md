@@ -15,6 +15,10 @@ The viewer opens at `http://127.0.0.1:5000`. Load a map named with its patient a
 
 The data-free static analyzer is in `docs/index.html`. It runs the shared `tendon_geometry.py` pipeline in a Pyodide Web Worker and accepts a local MTR image, one or more tendon segmentation NIfTI files, and the B0 vector in image axes. Selected files are not uploaded. The generated angle, magic-angle, deviation, label, centerline, and CSV outputs can be viewed and downloaded directly in the browser. Precomputed outputs can still be opened independently.
 
+To browse a batch export, unzip it, open the analyzer, choose the extracted results folder, and select a subject. The viewer loads that subject's MTR and precomputed maps locally; use the overlay buttons and subject selector to browse the results without rerunning the analysis.
+
+The viewer's **MTR background cleanup (2x2x2, 8/8)** control applies an adjustable intensity floor and local-support test to a temporary display copy of the MTR. Voxels at or below the floor, or with fewer than 8 of 8 corner neighbors above it, are set to zero. This does not change saved images or angle maps. The selected angle overlay and centerline visibility are retained when switching subjects.
+
 The Pages workflow deploys `docs/` after pushes to `main`. In the GitHub repository settings, choose **Settings > Pages > Source > GitHub Actions**. Imaging data, generated results, and the generated DICOM orientation CSV are excluded by `.gitignore`.
 
 Each positive integer label in a segmentation file is treated as a separate tendon segment. The viewer colors these segments distinctly after analysis, even when several labels are stored in one NIfTI file. The downloads contain one combined angle map in degrees, one combined magic-angle parameter map, one absolute magic-angle deviation map, one labeled tendon map, one labeled centerline map, and a per-tendon summary CSV for the subject. Background voxels are `NaN` in the floating-point maps. The magic-angle parameter is $3\cos^2(\theta)-1$, with range $[-1, 2]$. Segmentations must share the reference MTR shape and affine and must not overlap.
